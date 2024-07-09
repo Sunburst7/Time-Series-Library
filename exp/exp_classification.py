@@ -190,4 +190,4 @@ class Exp_Classification(Exp_Basic):
         f.write('\n')
         f.write('\n')
         f.close()
-        return
+        return accuracy

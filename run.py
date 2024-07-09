@@ -9,6 +9,8 @@ from exp.exp_classification import Exp_Classification
 from utils.print_args import print_args
 import random
 import numpy as np
+import optuna
+from optuna import Trial
 
 if __name__ == '__main__':
     fix_seed = 2021
@@ -63,6 +65,7 @@ if __name__ == '__main__':
     parser.add_argument('--e_layers', type=int, default=2, help='num of encoder layers')
     parser.add_argument('--d_layers', type=int, default=1, help='num of decoder layers')
     parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
+    parser.add_argument('--d_quantile', type=int, default=100, help='dimension of quantile')
     parser.add_argument('--moving_avg', type=int, default=25, help='window size of moving average')
     parser.add_argument('--factor', type=int, default=1, help='attn factor')
     parser.add_argument('--distil', action='store_false',
@@ -160,40 +163,28 @@ if __name__ == '__main__':
     else:
         Exp = Exp_Long_Term_Forecast
 
-    if args.is_training:
-        for ii in range(args.itr):
-            # setting record of experiments
-            exp = Exp(args)  # set experiments
-            setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
-                args.task_name,
-                args.model_id,
-                args.model,
-                args.data,
-                args.features,
-                args.seq_len,
-                args.label_len,
-                args.pred_len,
-                args.d_model,
-                args.n_heads,
-                args.e_layers,
-                args.d_layers,
-                args.d_ff,
-                args.expand,
-                args.d_conv,
-                args.factor,
-                args.embed,
-                args.distil,
-                args.des, ii)
 
-            print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
-            exp.train(setting)
+    def objective(trial: Trial):
+        args.e_layers = trial.suggest_int('e_layers', 2, 6)
+        args.batch_size = trial.suggest_int("batch_size", 8, 256, 8)
+        args.d_model = trial.suggest_int("d_model", 8, 128, 2)
+        args.d_ff = trial.suggest_int("d_ff", 8, 128, 2)
+        args.top_k = trial.suggest_int("top_k", 2, 8)
+        args.d_quantile = trial.suggest_int("d_quantile", 10, 200, 10) # seq_len
+        args.learning_rate = trial.suggest_float('learning_rate', 1e-3, 0.1)
+        
+        # adjustable_params = {
+        #     'e_layers': trial.suggest_int('e_layers', 2, 10),
+        #     'batch_size': trial.suggest_int("batch_size", 8, 256),
+        #     'd_model': trial.suggest_int("d_model", 16, 128),
+        #     'd_ff': trial.suggest_int("d_ff", 16, 128),
+        #     'top_k': trial.suggest_int("top_k", 3, 5),
+        #     'd_quantile': trial.suggest_int("d_quantile", 10, 1000),
+        #     'learning_rate': trial.suggest_float('learning_rate', 1e-4, 0.1),
+        # }
 
-            print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-            exp.test(setting)
-            torch.cuda.empty_cache()
-    else:
-        ii = 0
-        setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
+        exp = Exp(args)  # set experiments
+        setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_dq{}_{}_{}'.format(
             args.task_name,
             args.model_id,
             args.model,
@@ -212,9 +203,77 @@ if __name__ == '__main__':
             args.factor,
             args.embed,
             args.distil,
-            args.des, ii)
+            args.d_quantile,
+            args.des, 0)
 
-        exp = Exp(args)  # set experiments
+        print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
+        exp.train(setting)
+
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-        exp.test(setting, test=1)
+        acc = exp.test(setting)
         torch.cuda.empty_cache()
+        return acc
+
+    study = optuna.create_study(direction='maximize')
+    study.optimize(objective, n_trials=500)
+    best_param = study.best_params
+    print(f"Best value: {study.best_value} (params: {study.best_params})")
+
+    # if args.is_training:
+    #     for ii in range(args.itr):
+    #         # setting record of experiments
+    #         exp = Exp(args)  # set experiments
+    #         setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
+    #             args.task_name,
+    #             args.model_id,
+    #             args.model,
+    #             args.data,
+    #             args.features,
+    #             args.seq_len,
+    #             args.label_len,
+    #             args.pred_len,
+    #             args.d_model,
+    #             args.n_heads,
+    #             args.e_layers,
+    #             args.d_layers,
+    #             args.d_ff,
+    #             args.expand,
+    #             args.d_conv,
+    #             args.factor,
+    #             args.embed,
+    #             args.distil,
+    #             args.des, ii)
+
+    #         print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
+    #         exp.train(setting)
+
+    #         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+    #         exp.test(setting)
+    #         torch.cuda.empty_cache()
+    # else:
+    #     ii = 0
+    #     setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
+    #         args.task_name,
+    #         args.model_id,
+    #         args.model,
+    #         args.data,
+    #         args.features,
+    #         args.seq_len,
+    #         args.label_len,
+    #         args.pred_len,
+    #         args.d_model,
+    #         args.n_heads,
+    #         args.e_layers,
+    #         args.d_layers,
+    #         args.d_ff,
+    #         args.expand,
+    #         args.d_conv,
+    #         args.factor,
+    #         args.embed,
+    #         args.distil,
+    #         args.des, ii)
+
+    #     exp = Exp(args)  # set experiments
+    #     print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+    #     exp.test(setting, test=1)
+    #     torch.cuda.empty_cache()

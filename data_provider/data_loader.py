@@ -9,9 +9,10 @@ from sklearn.preprocessing import StandardScaler
 from utils.timefeatures import time_features
 from data_provider.m4 import M4Dataset, M4Meta
 from data_provider.uea import subsample, interpolate_missing, Normalizer
-from sktime.datasets import load_from_tsfile_to_dataframe
+from sktime.datasets import load_from_tsfile_to_dataframe, write_dataframe_to_tsfile
 import warnings
 from utils.augmentation import run_augmentation_single
+from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
 
@@ -652,7 +653,7 @@ class UEAloader(Dataset):
         # pre_process
         normalizer = Normalizer()
         self.feature_df = normalizer.normalize(self.feature_df)
-        print(len(self.all_IDs))
+        #print(len(self.all_IDs))
 
     def load_all(self, root_path, file_list=None, flag=None):
         """
@@ -746,3 +747,29 @@ class UEAloader(Dataset):
 
     def __len__(self):
         return len(self.all_IDs)
+
+class Aisloader(UEAloader):
+    def __init__(self, args, root_path, file_list=None, limit_size=None, flag=None):
+        self.max_seq_len = self.bins = args.d_quantile
+        super().__init__(args, root_path, file_list, limit_size, flag)
+
+    def load_all(self, root_path, file_list=None, flag:str=None):
+        flag = flag.lower()
+        all_df = pd.DataFrame(columns=["dim_" + str(i) for i in range(4)])
+        labels = []
+        path_df = pd.read_csv(os.path.join(root_path, flag + '.csv')).iloc[:, 1:]
+        for i, (label, path) in enumerate(tqdm(path_df.values, desc=f"loading {flag} data...")):
+            narr = pd.read_csv(os.path.join(root_path, path), sep=' ', 
+                             names=["time", "dim_0", "dim_1", "dim_2", "dim_3"]).iloc[:, 1:].to_numpy()
+            narr = np.quantile(narr, np.linspace(0, 1, self.bins), axis=0)
+            df = pd.DataFrame(narr, columns=["dim_" + str(i) for i in range(4)]).set_index(pd.Series([i] * self.bins))
+            all_df = pd.concat([all_df, df], axis=0)
+            labels.append(label)
+        labels = pd.Series(labels, dtype='category')
+        
+        self.class_names = labels.cat.categories
+        labels_df = pd.DataFrame(labels.cat.codes,
+                                 dtype=np.int8)  # int8-32 gives an error when using nn.CrossEntropyLoss
+
+        
+        return all_df, labels_df
